@@ -5,6 +5,7 @@ import plotly.express as px
 from PIL import Image
 import json
 import random
+import io
 
 st.set_page_config(page_title="Fragebogen Analytics Studio", layout="wide", page_icon="🔬")
 
@@ -20,8 +21,12 @@ if not api_key:
     st.info("Bitte gib in der Seitenleiste deinen Gemini API Key ein.")
     st.stop()
 
+# Initialisierung mit robuster Modellwahl
 genai.configure(api_key=api_key)
-model = genai.GenerativeModel("gemini-1.5-flash")
+try:
+    model = genai.GenerativeModel("gemini-1.5-flash-latest")
+except Exception:
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
 # Upload
 uploaded_files = st.file_uploader(
@@ -34,7 +39,7 @@ EXTRACTION_PROMPT = """
 Analysiere diesen ausgefüllten Fragebogen extrem genau.
 Achte besonders darauf, ob irgendwo eine GROSSE HANDSCHRIFTLICHE NUMMER oder Bogen-ID steht (oft oben in der Ecke oder als Kennung für zusammengehörige Bögen).
 
-Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne Markdown-Codeblöcke:
+Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne Markdown-Codeblöcke (kein ```json ... ```):
 {
   "bogen_gruppe": "<Große handschriftliche Nummer oder Zahl z.B. 1, 2, A, oder 'Ohne Nummer'>",
   "gesamtzufriedenheit": <Note 1-5 als Zahl oder null>,
@@ -49,10 +54,17 @@ Antworte AUSSCHLIESSLICH im folgenden JSON-Format ohne Markdown-Codeblöcke:
 """
 
 def analyze_image(file):
-    image_bytes = file.getvalue()
-    image_part = {"mime_type": file.type, "data": image_bytes}
-    response = model.generate_content([EXTRACTION_PROMPT, image_part])
-    text = response.text.strip().replace("```json", "").replace("```", "").strip()
+    image = Image.open(io.BytesIO(file.getvalue()))
+    response = model.generate_content([EXTRACTION_PROMPT, image])
+    text = response.text.strip()
+    
+    # Eventuelle Markdown-Codeblöcke säubern
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    text = text.strip()
+    
     data = json.loads(text)
     data["dateiname"] = file.name
     data["bogen_gruppe"] = str(data.get("bogen_gruppe", "Ohne Nummer")).strip()
